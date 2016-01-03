@@ -1,0 +1,1009 @@
+
+
+
+
+HTTPAUTH                                                     A. Melnikov
+Internet-Draft                                                 Isode Ltd
+Intended status: Experimental                           December 5, 2015
+Expires: June 7, 2016
+
+
+    Salted Challenge Response (SCRAM) HTTP Authentication Mechanism    SCRAM——http认证机制
+                 draft-ietf-httpauth-scram-auth-14.txt
+
+Abstract							    概述
+
+   This specification describes a family of HTTP authentication     这篇文档详细介绍SCRAM认证机制，它提供了一种比传输层的纯文
+   mechanisms called the Salted Challenge Response Authentication   本密码保护机制更加健壮的认证机制，同时避免了早期TLS响应授
+   Mechanism (SCRAM), which provides a more robust authentication   权机制的部署障碍。
+   mechanism than a plaintext password protected by Transport Layer
+   Security (TLS) and avoids the deployment obstacles presented by
+   earlier TLS-protected challenge response authentication mechanisms.
+
+Status of This Memo
+
+   This Internet-Draft is submitted in full conformance with the
+   provisions of BCP 78 and BCP 79.
+
+   Internet-Drafts are working documents of the Internet Engineering
+   Task Force (IETF).  Note that other groups may also distribute
+   working documents as Internet-Drafts.  The list of current Internet-
+   Drafts is at http://datatracker.ietf.org/drafts/current/.
+
+   Internet-Drafts are draft documents valid for a maximum of six months
+   and may be updated, replaced, or obsoleted by other documents at any
+   time.  It is inappropriate to use Internet-Drafts as reference
+   material or to cite them other than as "work in progress."
+
+   This Internet-Draft will expire on June 7, 2016.
+
+Copyright Notice
+
+   Copyright (c) 2015 IETF Trust and the persons identified as the
+   document authors.  All rights reserved.
+
+   This document is subject to BCP 78 and the IETF Trust's Legal
+   Provisions Relating to IETF Documents
+   (http://trustee.ietf.org/license-info) in effect on the date of
+   publication of this document.  Please review these documents
+   carefully, as they describe your rights and restrictions with respect
+   to this document.  Code Components extracted from this document must
+   include Simplified BSD License text as described in Section 4.e of
+   the Trust Legal Provisions and are provided without warranty as
+
+
+
+Melnikov                  Expires June 7, 2016                  [Page 1]
+
+Internet-Draft                 HTTP SCRAM                  December 2015
+
+
+   described in the Simplified BSD License.
+
+Table of Contents
+
+   1.  Introduction  . . . . . . . . . . . . . . . . . . . . . . . .   2
+   2.  Conventions Used in This Document . . . . . . . . . . . . . .   3
+   2.1.  Terminology . . . . . . . . . . . . . . . . . . . . . . . .   3
+   2.2.  Notation  . . . . . . . . . . . . . . . . . . . . . . . . .   4
+   3.  SCRAM Algorithm Overview  . . . . . . . . . . . . . . . . . .   5
+   4.  SCRAM Mechanism Names . . . . . . . . . . . . . . . . . . . .   6
+   5.  SCRAM Authentication Exchange . . . . . . . . . . . . . . . .   7
+   5.1.  One round trip reauthentication . . . . . . . . . . . . . .  10
+   6.  Use of Authentication-Info header field with SCRAM  . . . . .  12
+   7.  Formal Syntax . . . . . . . . . . . . . . . . . . . . . . . .  12
+   8.  Security Considerations . . . . . . . . . . . . . . . . . . .  13
+   9.  IANA Considerations . . . . . . . . . . . . . . . . . . . . .  15
+   10. Acknowledgements  . . . . . . . . . . . . . . . . . . . . . .  15
+   11. Design Motivations  . . . . . . . . . . . . . . . . . . . . .  15
+   12. References  . . . . . . . . . . . . . . . . . . . . . . . . .  16
+   12.1.  Normative References . . . . . . . . . . . . . . . . . . .  16
+   12.2.  Informative References . . . . . . . . . . . . . . . . . .  17
+   Author's Address  . . . . . . . . . . . . . . . . . . . . . . . .  18
+
+1.  Introduction							 1.引言
+
+   The authentication mechanism most widely deployed and used by          TLS的纯文本密码形式是应用最为广泛的认证机制，并且正在
+   Internet application protocols is the transmission of clear-text       被网络应用层协议所使用。这种通过TLS来保证质询-响应的
+   passwords over a channel protected by Transport Layer Security (TLS).  认证机制仍旧有许多可取的地方。不幸的是，目前HTTP摘要 
+   There are some significant security concerns with that mechanism,	  认证仅仅在一些特定的环境下可以使用，并不能广泛推广。
+   which could be addressed by the use of a challenge response
+   authentication mechanism protected by TLS.  Unfortunately, the HTTP
+   Digest challenge response mechanism presently on the standards track
+   failed widespread deployment, and have had success only in limited
+   use.
+
+   This specification describes a family of authentication mechanisms	 本文介绍一类被称为伪装质询-响应认证机制（SCRAM），
+   called the Salted Challenge Response Authentication Mechanism (SCRAM) 在部署质询-响应机制时需要满足的必要条件方面，它比以前的	
+   which addresses the requirements necessary to deploy a challenge-     方式（详情见[RFC5802]）更加容易处理。另外，它还可以处理
+   response mechanism more widely than past attempts (see [RFC5802]).    HTTP摘要认证的一些问题，比如为了防御第三方攻击，需要在
+   In particular, it addresses some of the issues identified with HTTP   认证过程中将实施和保护复杂化。
+   Digest [RFC6331], such as complexity of implementing and protection
+   of the whole authentication exchange in order to protect from certain
+   man-in-the-middle attacks.
+
+   HTTP SCRAM is adoptation of [RFC5802] for use in HTTP.  (SCRAM data	 HTTP SCRAM被收录在[RFC5802]，用于HTTP使用标准。（SCRAM 
+   exchanged is identical to what is defined in [RFC5802].)  It also	 数据交换同样被定义在[RFC5802]）它也被添加在1往返重新认证
+   adds 1 round trip reauthentication mode.				 模式。
+
+
+
+
+Melnikov                  Expires June 7, 2016                  [Page 2]
+
+Internet-Draft                 HTTP SCRAM                  December 2015
+
+
+   HTTP SCRAM provides the following protocol features:			 HTTP SCRAM有以下特征：
+
+   o  The authentication information stored in the authentication	 o 存储在认证数据库中的认证信息不足以让黑客伪装成客户端
+      database is not sufficient by itself (without a dictionary attack) （在没有字典攻击的情况下）。即使数据库泄露，这些被伪装
+      to impersonate the client.  The information is salted to prevent a  过的数据信息也能够防止预先存储字典攻击。
+      pre-stored dictionary attack if the database is stolen.
+
+   o  The server does not gain the ability to impersonate the client to  o 服务端不能模拟其他服务端的客户端（除非被其他服务器授权）
+      other servers (with an exception for server-authorized proxies).
+
+   o  The mechanism permits the use of a server-authorized proxy without o 该机制允许在没有请求后端服务器超级用户权限的情况下，使用
+      requiring that proxy to have super-user rights with the back-end    服务器认证代理。
+      server.
+
+   o  Mutual authentication is supported, but only the client is named   o 支持相互认证，但是只有客户端被命名（服务端没有名字）。
+      (i.e., the server has no name).
+
+2.  Conventions Used in This Document					2.本文中的约定
+
+   The key words "MUST", "MUST NOT", "REQUIRED", "SHALL", "SHALL NOT",    文档中"MUST", "MUST NOT", "REQUIRED", "SHALL", "SHALL NOT",
+   "SHOULD", "SHOULD NOT", "RECOMMENDED", "MAY", and "OPTIONAL" in this   "SHOULD", "SHOULD NOT", "RECOMMENDED", "MAY", and "OPTIONAL"
+   document are to be interpreted as described in [RFC2119].               相关解释参考[RFC2119]。
+
+   Formal syntax is defined by [RFC5234] including the core rules         正式语法规则参考[RFC5234]，还有一些核心规则参考[RFC5234]附录B。
+   defined in Appendix B of [RFC5234].
+
+   Example lines prefaced by "C:" are sent by the client and ones	  样例行以“C:”开头的是客户端发送的，服务器端发送的以”S:“开头，
+   prefaced by "S:" by the server.  If a single "C:" or "S:" label        如果一个单一的”C:“或者”S:“被用于多行，则他们只是用于分割多行，
+   applies to multiple lines, then the line breaks between those lines    使结构清晰，不是实际语法交换的一部分。
+   are for editorial clarity only, and are not part of the actual
+   protocol exchange.
+
+2.1.  Terminology							2.1 术语
+
+   This document uses several terms defined in [RFC4949] ("Internet       本文使用的一些术语定义在[RFC4949]（网络安全术语表）中，
+   Security Glossary") including the following: authentication,           包括：认证，认证交换，认证信息，暴力，质询-响应，哈希
+   authentication exchange, authentication information, brute force,      加密函数，字典攻击，窃听，散列结果，哈希，中间人，随机数
+   challenge-response, cryptographic hash function, dictionary attack,    单向加密函数，密码，重放攻击和伪装。读者如果不熟悉这些
+   eavesdropping, hash result, keyed hash, man-in-the-middle, nonce,	  术语可参考该术语表。
+   one-way encryption function, password, replay attack and salt.
+   Readers not familiar with these terms should use that glossary as a
+   reference.
+
+   Some clarifications and additional definitions follow:		 一些澄清和额外定义：  
+
+   o  Authentication information: Information used to verify an identity o 认证信息：用于验证SCRAM客户端的信息。该认证信息包括伪装
+      claimed by a SCRAM client.  The authentication information for a     ，迭代计算，”StoredKey“和”ServerKey“（定义见算法概述）。	
+      SCRAM identity consists of salt, iteration count, the "StoredKey"    被所有支持加密的哈希算法使用。
+
+
+
+Melnikov                  Expires June 7, 2016                  [Page 3]
+
+Internet-Draft                 HTTP SCRAM                  December 2015
+
+
+      and "ServerKey" (as defined in the algorithm overview) for each
+      supported cryptographic hash function.
+
+   o  Authentication database: The database used to look up the         o 认证数据库：被用于查找认证信息的数据库，紧密联系于身份
+      authentication information associated with a particular identity.    认证。对于应用层协议，LDAPv3（见[RFC4510]）常被用做认证
+      For application protocols, LDAPv3 (see [RFC4510]) is frequently      数据库。对于低层次协议如PPP或者802.11x,RADIUS [RFC2865]
+      used as the authentication database.  For lower-layer protocols      更加常用。
+      such as PPP or 802.11x, the use of RADIUS [RFC2865] is more
+      common.
+
+   o  Base64: An encoding mechanism defined in Section 4 of [RFC4648]   o Base64：一种被定义在[RFC4648]第四节的编码机制，它将字节码
+      which converts an octet string input to a textual output string      的字符串输入转换为更易于人们理解的文本字符串输出。base64被用于SCRAM
+      which can be easily displayed to a human.  The use of base64 in	   中没有空格的规范文本中。
+      SCRAM is restricted to the canonical form with no whitespace.
+
+   o  Octet: An 8-bit byte.						o Octet:八位的字节。
+
+   o  Octet string: A sequence of 8-bit bytes.                          o Octet string:八位字节的序列。
+ 
+   o  Salt: A random octet string that is combined with a password      o Salt:将一个随机的八位字符串糅合在密码中，再将其应用
+      before applying a one-way encryption function.  This value is used   在单向加密函数中。该值的作用是保护被存储在认证数据
+      to protect passwords that are stored in an authentication            库中的密码。
+      database.
+
+2.2.  Notation							       2.2. 符号说明
+
+   The pseudocode description of the algorithm uses the following         算法的伪代码描述使用了以下的符号：
+   notations:
+
+   o  ":=": The variable on the left hand side represents the octet      o ":=":等号左边的变量表示右边表达式结果的八位字符串形式。
+      string resulting from the expression on the right hand side.
+
+   o  "+": Octet string concatenation.                                   o "+":字符串的连接。
+
+   o  "[ ]": A portion of an expression enclosed in "[" and "]" may not  o "[ ]":"["和"]"中间的部分在某些情况下可能不被包含在结果中。
+      be included in the result under some circumstances.  See the	     关于这些情况，参见相关文本描述。
+      associated text for a description of those circumstances.
+
+   o  Normalize(str): Apply the Preparation and Enforcement steps	 o 规范化(str):应用OpaqueString概要文件（见[RFC7613]）中
+      according to the OpaqueString profile (see [RFC7613]) to a UTF-8     准备和实施步骤规范化为utf-8编码的字符串。由此产生的
+      [RFC3629] encoded "str".  The resulting string is also in UTF-8.	   字符串也是utf-8。注意该操作要么实现OpaqueString概要文
+      Note that implementations MUST either implement OpaqueString	   件（[RFC7613]），要么不允许在”str“中使用非US-ASCII 
+      profile operations from [RFC7613], or disallow use of non US-ASCII   Unicode代码点。后者的具体情况符合(RFC7613)。
+      Unicode codepoints in "str".  The latter is a particular case of
+      compliance with [RFC7613].
+
+   o  HMAC(key, str): Apply the HMAC keyed hash algorithm (defined in    o HMAC(key, str):应用了HMAC的散列算法(定义见
+     [RFC2104]) using the octet string represented by "key" as the key      [RFC2104])使用八位字节字符串为代表的“key”作为key值，
+									     并且这”str“作为输入字符串。结果的大小就是使用的哈希函数
+									    的结果大小。例如，SHA-256是32个8位字节，SHA-1是20个（见[RFC6234]）
+
+
+Melnikov                  Expires June 7, 2016                  [Page 4]
+
+Internet-Draft                 HTTP SCRAM                  December 2015
+
+
+      and the octet string "str" as the input string.  The size of the
+      result is the hash result size for the hash function in use.  For
+      example, it is 32 octets for SHA-256 and 20 octets for SHA-1 (see
+      [RFC6234]).
+
+   o  H(str): Apply the cryptographic hash function to the octet string  o H(str):将加密哈希函数应用于8位字节的字符串”str“，产生
+      "str", producing an octet string as a result.  The size of the        一个8位字节的字符串结果。结果的大小取决于选用的哈希函数。
+      result depends on the hash result size for the hash function in
+      use.
+
+   o  XOR: Apply the exclusive-or operation to combine the octet string  o XOR: 将操作符的左右两边进行异或操作。两个输入和输出的长度
+      on the left of this operator with the octet string on the right of    相同。
+      this operator.  The length of the output and each of the two
+      inputs will be the same for this use.
+
+   o  Hi(str, salt, i):							 o Hi(str, salt, i):
+
+
+      U1   := HMAC(str, salt + INT(1))					    U1   := HMAC(str, salt + INT(1))
+      U2   := HMAC(str, U1)                                                 U2   := HMAC(str, U1)
+      ...								    ...
+      Ui-1 := HMAC(str, Ui-2)						    Ui-1 := HMAC(str, Ui-2)
+      Ui   := HMAC(str, Ui-1)						    Ui   := HMAC(str, Ui-1)
+
+      Hi := U1 XOR U2 XOR ... XOR Ui					    Hi := U1 XOR U2 XOR ... XOR Ui
+
+
+      where "i" is the iteration count, "+" is the string concatenation     其中”i“为迭代计数器，”+“是字符串连接操作，INT（g）
+      operator and INT(g) is a four-octet encoding of the integer g,	    是整型g的four-octet编码，最重要的八位字节。
+      most significant octet first.
+
+      Hi() is, essentially, PBKDF2 [RFC2898] with HMAC() as the PRF and     本质上讲，Hi()是 PBKDF2 [RFC2898]使用 HMAC()作为
+      with dkLen == output length of HMAC() == output length of H().	    PRF并且dkLen == HMAC()输出长度==H()输出长度。
+
+
+3.  SCRAM Algorithm Overview						  3. SCRAM算法预览
+
+   The following is a description of a full HTTP SCRAM authentication       下面是一个完整的HTTP SCRAM认证交换的描述。这一节
+   exchange.  Note that this section omits some details, such as client     省略了一些细节，如客户端和服务端随机数。更多细节参见章节
+   and server nonces.  See Section 5 for more details.			    章节5。
+
+   To begin with, the SCRAM client is in possession of a username and       作为开始，SCRAM客户端拥有用户名和密码（或者ClientKey/ServerKey,
+   password (*) (or a ClientKey/ServerKey, or SaltedPassword).  It sends    ，或伪装过的密码）。发送用户名到服务端，获取相应的
+   the username to the server, which retrieves the corresponding            认证信息，比如干扰码，StoredKey, ServerKey和迭代计数i。
+   authentication information, i.e. a salt, StoredKey, ServerKey and the    （服务端的实现有可能选择使用相同的迭代技术）服务端发送
+   iteration count i.  (Note that a server implementation may choose to     干扰码和迭代计数到客户端，客户端计算下面的值并且发送
+   use the same iteration count for all accounts.)  The server sends the    客户端证明给服务端：
+   salt and the iteration count to the client, which then computes the
+   following values and sends a ClientProof to the server:
+
+
+
+Melnikov                  Expires June 7, 2016                  [Page 5]
+
+Internet-Draft                 HTTP SCRAM                  December 2015
+
+
+   (*) - Note that both the username and the password MUST be encoded in    (*) - 注意：用户名和密码必须是UTF-8 [RFC3629]编码。
+   UTF-8 [RFC3629].							     			
+
+   Informative Note: Implementors are encouraged to create test cases        有用的笔记：建议实现者使用非ASCLL代码点形式的用户名
+   that use both username passwords with non-ASCII codepoints.  In	     和密码。特别的，对于测试"Unicode Normalization Form C" 
+   particular, it is useful to test codepoints whose "Unicode		     和"Unicode Normalization Form KC"的不同是非常有用的。
+   Normalization Form C" and "Unicode Normalization Form KC" are             该类示例还包括分数的一半(U+00BD)和比较偏的词(U+00B4)。
+   different.  Some examples of such codepoints include Vulgar Fraction
+   One Half (U+00BD) and Acute Accent (U+00B4).
+
+
+      SaltedPassword  := Hi(Normalize(password), salt, i)                    
+      ClientKey       := HMAC(SaltedPassword, "Client Key")
+      StoredKey       := H(ClientKey)
+      AuthMessage     := client-first-message-bare + "," +
+                         server-first-message + "," +
+                         client-final-message-without-proof
+      ClientSignature := HMAC(StoredKey, AuthMessage)
+      ClientProof     := ClientKey XOR ClientSignature
+      ServerKey       := HMAC(SaltedPassword, "Server Key")
+      ServerSignature := HMAC(ServerKey, AuthMessage)
+
+
+   The server authenticates the client by computing the ClientSignature,     服务端根据计算客户端签名认证客户端，异或ClientProof
+   exclusive-ORing that with the ClientProof to recover the ClientKey	     去恢复ClientKey，应用哈希函数验证ClientKey的正确性，
+   and verifying the correctness of the ClientKey by applying the hash       然后将结果与StoredKey做比较。如果ClientKey是正确的，
+   function and comparing the result to the StoredKey.  If the ClientKey     证明该客户端可以访问用户密码。
+   is correct, this proves that the client has access to the user's
+   password.
+
+   Similarly, the client authenticates the server by computing the           同样，客户端根据计算服务端的签名并比较该值来认证服务端。
+   ServerSignature and comparing it to the value sent by the server.  If     如果两个值相等，证明该服务端可以访问用户的ServerKey。
+   the two are equal, it proves that the server had access to the user's
+   ServerKey.
+
+   For initial authentication the AuthMessage is computed by                 对于首次认证，认证消息根据认证交换的”data“属性解码
+   concatenating decoded "data" attribute values from the authentication     计算获得。消息格式定义在[RFC5802]。
+   exchange.  The format of these messages is defined in [RFC5802].
+
+4.  SCRAM Mechanism Names						   4.  SCRAM机制名称
+
+   A SCRAM mechanism name (authentication scheme) is a string "SCRAM-"       一个SCRAM机制名称（认证机制）是一个字符串"SCRAM-"，
+   followed by the uppercased name of the underlying hash function taken     后面紧跟注册于IANA的”哈希文本名称“的大写名称。
+   from the IANA "Hash Function Textual Names" registry (see                 （见http://www.iana.org）。
+   http://www.iana.org) .
+
+   For interoperability, all HTTP clients and servers supporting SCRAM       为了互操作性，所有支持SCRAM的HTTP客户端和服务端必须
+   MUST implement the SCRAM-SHA-256 authentication mechanism, i.e. an        实现SCRAM-SHA-256认证机制。例如，一个SCRAM的认证机制
+
+
+
+Melnikov                  Expires June 7, 2016                  [Page 6]
+
+Internet-Draft                 HTTP SCRAM                  December 2015
+
+
+   authentication mechanism from the SCRAM family that uses the SHA-256      使用SHA-256哈希函数，定义见[RFC7677]。
+   hash function as defined in [RFC7677].
+
+5.  SCRAM Authentication Exchange					   5.  SCRAM 认证交换
+
+   HTTP SCRAM is a HTTP Authentication mechanism whose client response       HTTP SCRAM是一种客户端相应，服务端质询的认证机制
+   (<credentials-scram>) and server challenge (<challenge-scram>)	     它的消息是基于文本的，包含一个或者多个被逗号分隔的属性对。
+   messages are text-based messages containing one or more attribute-        这些消息和属性描述如下，定义见section 7。
+   value pairs separated by commas.  The messages and their attributes       
+   are described below and defined in Section 7.
+
+
+       challenge-scram   = scram-name [1*SP 1#auth-param]
+             ; Complies with <challenge> ABNF from RFC 7235.                  符合RFC 7235 <challenge> ABNF    
+             ; Included in the WWW-Authenticate header field.                 包含在WWW-Authenticate头部。
+
+       credentials-scram = scram-name [1*SP 1#auth-param]
+             ; Complies with <credentials> from RFC 7235.                     符合RFC 7235 <credentials>
+             ; Included in the Authorization header field.                    包含在认证头部
+
+       scram-name = "SCRAM-SHA-256" / "SCRAM-SHA-1" / other-scram-name
+             ; SCRAM-SHA-256 and SCRAM-SHA-1 are registered by this RFC.       SCRAM-SHA-256和SCRAM-SHA-1注册在RFC
+             ;
+             ; SCRAM-SHA-1 is registered for database compatibility            SCRAM-SHA-1用于数据库兼容性，使用RFC 5802的实现 
+             ; with implementations of RFC 5802 (such as IMAP or XMPP          （如IMAP或XMPP 服务），但不推荐使用。
+             ; servers), but it is not recommended for new deployments.
+
+       other-scram-name = "SCRAM-" hash-name
+             ; hash-name is a capitalized form of names from IANA              哈希名称是注册于IANA的”哈希函数文本名称“的大写，
+             ; "Hash Function Textual Names" registry.			       额外的SCRAM名称必须都被注册于IANA 的"SASL mechanisms"
+             ; Additional SCRAM names must be registered in both               和"authentication scheme"。
+             ; the IANA "SASL mechanisms" registry
+             ; and the IANA "authentication scheme" registry.
+
+
+   This is a simple example of a SCRAM-SHA-256 authentication exchange         一个简单的SCRAM-SHA-256认证交换示例如下（不支持信道绑定，
+   (no support for channel bindings, as this feature is not currently         该功能目前不被HTTP支持）。名户名”user“和密码”pencil“。
+   supported by HTTP).  Username 'user' and password 'pencil' are used.       长线被加粗是为了方便阅读。
+   Note that long lines are folded for readability. 
+
+
+
+
+
+
+
+
+
+
+
+
+Melnikov                  Expires June 7, 2016                  [Page 7]
+
+Internet-Draft                 HTTP SCRAM                  December 2015
+
+
+   C: GET /resource HTTP/1.1
+   C: Host: server.example.com
+   C: [...]
+
+   S: HTTP/1.1 401 Unauthorized
+   S: WWW-Authenticate: Digest realm="realm1@example.com",
+          Digest realm="realm2@example.com",
+          Digest realm="realm3@example.com",
+          SCRAM-SHA-256 realm="realm3@example.com",
+          SCRAM-SHA-256 realm="testrealm@example.com"
+   S: [...]
+
+   C: GET /resource HTTP/1.1
+   C: Host: server.example.com
+   C: Authorization: SCRAM-SHA-256 realm="testrealm@example.com",
+          data=biwsbj11c2VyLHI9ck9wck5HZndFYmVSV2diTkVrcU8K
+   C: [...]
+
+   S: HTTP/1.1 401 Unauthorized
+   S: WWW-Authenticate: SCRAM-SHA-256
+           sid=AAAABBBBCCCCDDDD,
+           data=cj1yT3ByTkdmd0ViZVJXZ2JORWtxTyVodllEcFdVYTJSYVRDQWZ1eEZJbGo
+             paE5sRixzPVcyMlphSjBTTlk3c29Fc1VFamI2Z1E9PSxpPTQwOTYK
+   S: [...]
+
+   C: GET /resource HTTP/1.1
+   C: Host: server.example.com
+   C: Authorization: SCRAM-SHA-256 sid=AAAABBBBCCCCDDDD,
+          data=Yz1iaXdzLHI9ck9wck5HZndFYmVSV2diTkVrcU8laHZZRHBXVWEyUmFUQ0FmdXhG
+               SWxqKWhObEYscD1kSHpiWmFwV0lrNGpVaE4rVXRlOXl0YWc5empmTUhnc3FtbWl6
+               N0FuZFZRPQo=
+   C: [...]
+
+   S: HTTP/1.1 200 Ok
+   S: Authentication-Info: sid=AAAABBBBCCCCDDDD,
+          data=dj02cnJpVFJCaTIzV3BSUi93dHVwK21NaFVaVW4vZEI1bkxUSlJzamw5NUc0PQo=
+   S: [...Other header fields and resource body...]
+
+
+   In the above example the first client request contains data attribute        上述示例中，第一个客户端请求数据包含的属性被
+   which base64 decodes as follows: "n,,n=user,r=rOprNGfwEbeRWgbNEkqO"          被base64解码如下："n,,n=user,r=rOprNGfwEbeRWgbNEkqO"
+   (with no quotes).  Server then responds with data attribute which            服务端响应数据属性如下："r=rOprNGfwEbeRWgbNEkqO%hvYDpWUa2RaTCAfuxF
+   base64 decodes as follows: "r=rOprNGfwEbeRWgbNEkqO%hvYDpWUa2RaTCAfuxF         Ilj)hNlF,s=W22ZaJ0SNY7soEsUEjb6gQ==,i=4096"。下一个
+   Ilj)hNlF,s=W22ZaJ0SNY7soEsUEjb6gQ==,i=4096".  The next client request        客户端请求数据包含的属性被base64解码如下：
+   contains data attribute which base64 decodes as follows: "c=biws,r=rO         "c=biws,r=rO
+   prNGfwEbeRWgbNEkqO%hvYDpWUa2RaTCAfuxFIlj)hNlF,p=dHzbZapWIk4jUhN+Ute9y         prNGfwEbeRWgbNEkqO%hvYDpWUa2RaTCAfuxFIlj)hNlF,p=dHzbZapWIk4jUhN+Ute9y
+   tag9zjfMHgsqmmiz7AndVQ=".  The final server response contains a data          tag9zjfMHgsqmmiz7AndVQ="。服务端响应数据：
+   attribute which base64 decodes as follows:
+
+
+
+Melnikov                  Expires June 7, 2016                  [Page 8]
+
+Internet-Draft                 HTTP SCRAM                  December 2015
+
+
+   "v=6rriTRBi23WpRR/wtup+mMhUZUn/dB5nLTJRsjl95G4=".				"v=6rriTRBi23WpRR/wtup+mMhUZUn/dB5nLTJRsjl95G4="。
+
+   Note that in the example above the client can also initiate SCRAM            注意上述示例中，客户端也可以初始化SCRAM认证，而不必
+   authentication without first being prompted by the server.                   等待服务端提示。
+
+   Initial "SCRAM-SHA-256" authentication starts with sending the               最初的"SCRAM-SHA-256"认证以发送"Authorization"请求头
+   "Authorization" request header field defined by HTTP/1.1, Part 7             作为开始，定义见HTTP/1.1，Part 7 [RFC7235]包括了
+   [RFC7235] containing "SCRAM-SHA-256" authentication scheme and the           "SCRAM-SHA-256"认证机制和一下属性：
+   following attributes:
+
+   o  A "realm" attribute MAY be included to indicate the scope of             o 属性"realm"表述保护的范围，参见HTTP/1.1, Part 7 [RFC7235]。
+      protection in the manner described in HTTP/1.1, Part 7 [RFC7235].         [RFC7235]指出，"realm"属性只能出现一次。并且只出现
+      As specified in [RFC7235], the "realm" attribute MUST NOT appear          在第一次发送给服务端的SCRAM消息和服务端的第一次响应。
+      more than once.  The realm attribute only appears in the first
+      SCRAM message to the server and in the first SCRAM response from
+      the server.
+
+   o  The client also includes the data attribute that contains base64          o 客户端也包含的数据属性：
+      encoded "client-first-message" [RFC5802] containing:
+
+      *  a header consisting of a flag indicating whether channel                 * 头包含一个flag属性，用来标志信道绑定是supported-but-not-used、
+         binding is supported-but-not-used, not supported, or used .                不支持还是使用。这一版本的SCRAM不支持HTTP信道绑定，
+         Note that this version of SCRAM doesn't support HTTP channel               所以头部常以”n“开始；该信息无效则认证失败。
+         bindings, so this header always starts with "n"; otherwise the 
+         message is invalid and authentication MUST fail.
+
+      *  SCRAM username and a random, unique nonce attributes.			  * SCRAM用户名和随机数，单一随机属性。
+
+   In HTTP response, the server sends WWW-Authenticate header field		 HTTP响应中，服务端发送WWW-Authenticate头包括：
+   containing: a unique session identifier (the "sid" attribute) plus		 唯一的会话标识（“sid”属性）加上”data“属性——base64
+   the "data" attribute containing base64-encoded "server-first-message"         编码的"server-first-message"[RFC5802]。"server-first-message"
+   [RFC5802].  The "server-first-message" contains the user's iteration          包括用户迭代计数i，用户扰码，服务端新生成的随机数。
+   count i, the user's salt, and the nonce with a concatenation of the
+   client-specified one (taken from the "client-first-message") with a
+   freshly generated server nonce.
+
+   The client then responds with another HTTP request with the                   客户端然后使用另外一个包含认证头的HTTP请求响应，
+   Authorization header field, which includes the "sid" attribute                包含从服务端接收的属性”sid“，在"client-final-message"数据中的
+   received in the previous server response, together with the "data"            ”data“属性。后者含有和"server-first-message"相同的随机数，
+   attribute containing base64-encoded "client-final-message" data.  The          将该值和ClientProof用于所选的哈希函数计算。
+   latter has the same nonce as in "server-first-message" and a
+   ClientProof computed using the selected hash function (e.g.  SHA-256)
+   as explained earlier.
+
+   The server verifies the nonce and the proof, and, finally, it                服务端验证该随机数和证明，最后，使用HTTP响应码
+   responds with a 200 HTTP response with the Authentication-Info header        200，”sid“属性和”data“属性，完成认证交换。
+   field [RFC7615] containing the "sid" attribute (as received from the
+   client) and the "data" attribute containing base64-encoded "server-
+
+
+
+Melnikov                  Expires June 7, 2016                  [Page 9]
+
+Internet-Draft                 HTTP SCRAM                  December 2015
+
+
+   final-message", concluding the authentication exchange.
+
+   The client then authenticates the server by computing the                  客户端根据计算服务端签名和比较服务端发送的值来完成
+   ServerSignature and comparing it to the value sent by the server.  If      验证。如果两个值不相等，则该次认证失败并断开连接。
+   the two are different, the client MUST consider the authentication
+   exchange to be unsuccessful and it might have to drop the connection.
+
+5.1.  One round trip reauthentication					    5.1. 1往返重认证
+
+   If the server supports SCRAM reauthentication, the server sends in         如果服务端支持SCRAM重认证，服务端发送的初始HTTP响应
+   its initial HTTP response a WWW-Authenticate header field containing:      的WWW-Authenticate头包含：属性"realm"，包含"r"属性
+   the "realm" attribute (as defined earlier), the "sr" attribute that        和可选属性"ttl"的"sr"属性。
+   contains the server part of the "r" attribute (see s-nonce in
+   [RFC5802]) and optional "ttl" attribute (which contains the "sr"
+   value validity in seconds).
+
+   If the client has authenticated to the same realm before (i.e. it           如果客户端已经认证过属性"realm"，它将通过"client-final-message"
+   remembers "i" and "s" attributes for the user from earlier		       回应。构建"client-final- message"过程中，"r"属性
+   authentication exchanges with the server), it can respond to that	       c-nonce部分保持跟原来的认证相等，s-nonce部分如下：
+   with "client-final-message".  When constructing the "client-final-          s-nonce等于nonce-count和"sr"属性的连接。其中
+   message" the client constructs the c-nonce part of the "r" attribute        nonce-count是一个正整数，等于用户在第一次认证的"i"属性
+   as on initial authentication and the s-nonce part as follows: s-nonce       如果重新认证成功，该值加1。
+   is a concatenation of nonce-count and the "sr" attribute (in that
+   order).  The nonce-count is a positive integer that that is equal to
+   the user's "i" attribute on first reauthentication and is incremented
+   by 1 on each successful re-authentication.
+
+      The purpose of the nonce-count is to allow the server to detect          nonce-count的作用是允许服务端地址重放攻击，如果
+      request replays by maintaining its own copy of this count - if the       nonce-count出现两次，则该请求被视为重放。
+      same nonce-count value is seen twice, then the request is a
+      replay.
+
+   If the server considers the s-nonce part of the nonce attribute (the        如果服务端将nonce属性（"r"属性）的s-nonce部分
+   "r" attribute) to be still valid (i.e. the nonce-count part is as           仍视为有效，它将会提供请求资源。如果服务端将
+   expected (see above) and the "sr" part is still fresh), it will              nonce视为过期的，服务端返回"401 Unauthorized"，
+   provide access to the requested resource (assuming the client hash           包含信息：新的"sr"，"stale=true"和可选的"ttl"。
+   verifies correctly, of course).  However if the server considers that        "stale"属性标志着客户端不能再使用该密码。
+   the server part of the nonce is stale (for example if the "sr" value
+   is used after the "ttl" seconds), the server returns "401
+   Unauthorized" containing the SCRAM mechanism name with the following
+   attributes: a new "sr", "stale=true" and an optional "ttl".  The
+   "stale" attribute signals to the client that there is no need to ask
+   user for the password.
+
+      Formally, the "stale" attribute is defined as follows: A flag,           一般的，属性"stale"定义如下：flag，说明先前的请求
+      indicating that the previous request from the client was rejected        被拒绝是因为nonce值过期。如果stale职位TRUE，客户端
+      because the nonce value was stale.  If stale is TRUE (case-              可能会想使用一个新的加密响应重试该请求，而不用
+      insensitive), the client may wish to simply retry the request with       重新获取新的用户名和密码。当服务端接收到一个请求，它的nonce
+
+
+
+Melnikov                  Expires June 7, 2016                 [Page 10]
+
+Internet-Draft                 HTTP SCRAM                  December 2015
+
+
+      a new encrypted response, without reprompting the user for a new         无效但具有有效的摘要，则服务端只需简单的设置
+      username and password.  The server should only set stale to TRUE          stale为TRUE。如果stale为 FALSE，或者其他任何不为
+      if it receives a request for which the nonce is invalid but with a       TRUE的值，那么用户名和/或密码不合法，必须重新
+      valid digest for that nonce (indicating that the client knows the        获取。
+      correct username/password).  If stale is FALSE, or anything other
+      than TRUE, or the stale directive is not present, the username
+      and/or password are invalid, and new values must be obtained.
+
+   When constructing AuthMessage Section 3 to be used for calculating         当构建用于计算客户端和服务端证明的认证信息section 3
+   client and server proofs, "client-first-message-bare" and "server-         时，"client-first-message-bare" and "server-first-message"
+   first-message" are reconstructed from data known to the client and         也根据”data“属性重新构建。
+   the server.
+
+   Reauthentication can look like this:                                       重新认证过程如下：
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Melnikov                  Expires June 7, 2016                 [Page 11]
+
+Internet-Draft                 HTTP SCRAM                  December 2015
+
+
+   C: GET /resource HTTP/1.1
+   C: Host: server.example.com
+   C: [...]
+
+   S: HTTP/1.1 401 Unauthorized
+   S: WWW-Authenticate: Digest realm="realm1@example.com",
+          Digest realm="realm2@example.com",
+          Digest realm="realm3@example.com",
+          SCRAM-SHA-256 realm="realm3@example.com",
+          SCRAM-SHA-256 realm="testrealm@example.com", sr=%hvYDpWUa2RaTCAfuxFIlj)hNlF
+          SCRAM-SHA-256 realm="testrealm2@example.com", sr=AAABBBCCCDDD, ttl=120
+   S: [...]
+
+   [Client authenticates as usual to realm "testrealm@example.com"]
+
+   [Some time later client decides to reauthenticate.
+    It will use the cached "i" (4096) and "s" (W22ZaJ0SNY7soEsUEjb6gQ==)
+    from earlier exchanges. It will use the nonce-value of 4096 together
+    with the server advertised "sr" value as the server part of the "r".]
+
+   C: GET /resource HTTP/1.1
+   C: Host: server.example.com
+   C: Authorization: SCRAM-SHA-256 realm="testrealm@example.com",
+          data=Yz1iaXdzLHI9ck9wck5HZndFYmVSV2diTkVrcU80MDk2JWh2WURwV1VhMlJhVENB
+               ZnV4RklsailoTmxGLHA9ZEh6YlphcFdJazRqVWhOK1V0ZTl5dGFnOXpqZk1IZ3Nx
+               bW1pejdBbmRWUT0K
+
+   C: [...]
+
+   S: HTTP/1.1 200 Ok
+   S: Authentication-Info: sid=AAAABBBBCCCCDDDD,
+          data=dj02cnJpVFJCaTIzV3BSUi93dHVwK21NaFVaVW4vZEI1bkxUSlJzamw5NUc0PQo=
+   S: [...Other header fields and resource body...]
+
+
+6.  Use of Authentication-Info header field with SCRAM                          6. SCRAM认证头部信息的使用
+
+   When used with SCRAM, the Authentication-Info header field is allowed           当时用SCRAM时，认证信息头允许通过分块的传输
+   in the trailer of an HTTP message transferred via chunked transfer-             编码被添加在HTTP信息的尾部传输。
+   coding.
+
+7.  Formal Syntax								7. 正式的语法
+
+   The following syntax specification uses the Augmented Backus-Naur               以下使用的语法参见[RFC5234]。
+   Form (ABNF) notation as specified in [RFC5234].
+
+
+
+
+
+
+Melnikov                  Expires June 7, 2016                 [Page 12]
+
+Internet-Draft                 HTTP SCRAM                  December 2015
+
+
+      ALPHA = <as defined in RFC 5234 appendix B.1>
+      DIGIT = <as defined in RFC 5234 appendix B.1>
+
+      base64-char     = ALPHA / DIGIT / "/" / "+"
+
+      base64-4        = 4base64-char
+
+      base64-3        = 3base64-char "="
+
+      base64-2        = 2base64-char "=="
+
+      base64          = *base64-4 [base64-3 / base64-2]
+
+      sr              = "sr=" s-nonce
+                        ;; s-nonce is defined in RFC 5802.
+
+      data            = "data=" base64
+                        ;; The data attribute value is base64 encoded
+                        ;; SCRAM challenge or response defined in
+                        ;; RFC 5802.
+
+      ttl             = "ttl" = 1*DIGIT
+                        ;; "sr" value validity in seconds.
+                        ;; No leading 0s.
+
+      reauth-s-nonce  = nonce-count s-nonce
+
+      nonce-count     = posit-number
+                        ;; posit-number is defined in RFC 5802.
+                        ;; The initial value is taken from the "i"
+                        ;; attribute for the user and is incremented
+                        ;; by 1 on each successful re-authentication.
+
+      sid             = "sid=" token
+                        ;; See token definition in RFC 7235.
+
+      stale           = "stale=" ( "true" / "false" )
+
+      realm           = "realm=" <as defined in RFC 7235>
+
+
+8.  Security Considerations							8. 注意事项
+
+   If the authentication exchange is performed without a strong session			如果认证交换没有在健壮的加密会话下，
+   encryption (such as TLS with data confidentiality), then a passive			那么窃听者就能够获取足够的信息去挂载
+   eavesdropper can gain sufficient information to mount an offline			一个离线字典或者暴力破解用户密码。
+   dictionary or brute-force attack which can be used to recover the			破解时间的长短取决于所选的加密哈希函数
+   user's password.  The amount of time necessary for this attack
+
+
+
+Melnikov                  Expires June 7, 2016                 [Page 13]
+
+Internet-Draft                 HTTP SCRAM                  December 2015
+
+
+   depends on the cryptographic hash function selected, the strength of                 ，密码长度和服务端提供的迭代计数。SCRAM
+   the password and the iteration count supplied by the server.  SCRAM			允许server/server管理员去增加迭代计数的
+   allows the server/server administrator to increase the iteration			生命周期，以防止上述攻击。一个额外的强
+   count over time in order to slow down the above attacks.  (Note that			加密安全层可以防止这些攻击。
+   a server that is only in posession of "StoredKey" and "ServerKey"
+   can't automatic increase the iteration count upon successful
+   authentication.  Such increase would require resetting user's
+   password.)  An external security layer with strong encryption will
+   prevent these attack.
+
+   If the authentication information is stolen from the authentication			如果认证数据库被窃取，那么一个离线字典
+   database, then an offline dictionary or brute-force attack can be			或者暴力攻击将会被用于破解用户密码。
+   used to recover the user's password.  The use of salt mitigates this			扰码的使用一定程度上减缓了该攻击。认证
+   attack somewhat by requiring a separate attack on each password.			机制对于防止攻击时有效的。RFC 2945 [RFC2945]
+   Authentication mechanisms which protect against this attack are			就是该技术的一个示例。
+   available (e.g., the EKE class of mechanisms).  RFC 2945 [RFC2945] is
+   an example of such technology.
+
+   If an attacker obtains the authentication information from the			如果攻击者从认证仓库获取到认证信息，然后
+   authentication repository and either eavesdrops on one authentication		窃听认证交换或者模仿服务端，攻击者就能伪装
+   exchange or impersonates a server, the attacker gains the ability to			该用户获取所有服务端的信息。基于这个考虑
+   impersonate that user to all servers providing SCRAM access using the		使用随机生成的扰码就显得尤为重要。
+   same hash function, password, iteration count and salt.  For this
+   reason, it is important to use randomly-generated salt values.
+
+   SCRAM does not negotiate a hash function to use.  Hash function			SCRAM不在意使用哪种哈希函数。哈希函数的
+   negotiation is left to the HTTP authentication mechanism negotiation.		选择由HTTP认证机制确定。客户端能够一句引用对本地
+   It is important that clients be able to sort a locally available list		可用的列表进行排序是非常重要的，只有着这样
+   of mechanisms by preference so that the client may pick the most			客户端才能选择出最多引用的机制。引用列表
+   preferred of a server's advertised mechanism list.  This preference			作为一个本地问题，此处不再多说。引用
+   order is not specified here as it is a local matter.  The preference			排序需要考虑主观和客观的机制加密强度。
+   order should include objective and subjective notions of mechanism
+   cryptographic strength (e.g., SCRAM with a successor to SHA-1 may be
+   preferred over SCRAM with SHA-1).
+
+   A hostile server can perform a computational denial-of-service attack		当客户端发送一个大迭代计数值时，
+   on clients by sending a big iteration count value.  In order to			不友好的服务端将会产生拒绝服务攻击。为了
+   defend against that, a client implementation can pick a maximum			防止此类事情，客户端可以选择一个最大值，
+   iteration count that it is willing to use, and that it rejects any			拒绝任何超过该最大值的数据。
+   values that exceed that threshold (in such cases the client, of
+   course, has to fail the authentication).
+
+   See [RFC4086] for more information about generating randomness.			关于生成随机数的信息参见[RFC4086]。
+
+   This document recommends use of SCRAM with SHA-256 hash.  SCRAM-SHA-1		本文推荐使用SHA-256 hash的SCRAM。
+   is registered for database compatibility with implementations of RFC			SCRAM-SHA-1实现RFC 5802用于数据库兼容。
+   5802 (such as IMAP or XMPP servers) which want to also expose HTTP			暴露相关服务给HTTP，不利于新部署。
+   access to a related service, but it is not recommended for new
+
+
+
+Melnikov                  Expires June 7, 2016                 [Page 14]
+
+Internet-Draft                 HTTP SCRAM                  December 2015
+
+
+   deployments.
+
+9.  IANA Considerations								9.  IANA 注意事项
+
+   New mechanisms in the SCRAM- family are registered according to the			SCRAM- family新机制的注册参见[RFC5802]
+   IANA procedure specified in [RFC5802].
+
+   Note to future SCRAM- mechanism designers: each new SCRAM- HTTP			SCRAM机制的设计者注意：任何新的SCRAM-HTTP
+   authentication mechanism MUST be explicitly registered with IANA and			认证机制必须在IANA注册，并且遵守本文
+   MUST comply with SCRAM- mechanism naming convention defined in			Section 4的命名规范。
+   Section 4 of this document.
+
+   IANA is requested to add the following entry to the Authentication			IANA需要添加以下入口在认证机制注册中，
+   Scheme Registry defined in HTTP/1.1, Part 7 [RFC7235]:				定义见HTTP/1.1, Part 7 [RFC7235]:
+
+
+   Authentication Scheme Name: SCRAM-SHA-256
+   Pointer to specification text: [[ this document ]]
+   Notes (optional): (none)
+
+
+
+   Authentication Scheme Name: SCRAM-SHA-1
+   Pointer to specification text: [[ this document ]]
+   Notes (optional): (none)
+
+
+10.  Acknowledgements								
+
+   This document benefited from discussions on the HTTPAuth, SASL and
+   Kitten WG mailing lists.  The authors would like to specially thank
+   co-authors of [RFC5802] from which lots of text was copied.
+
+   Thank you to Martin Thomson for the idea of adding "ttl" attribute.
+
+   Thank you to Julian F.  Reschke for corrections regarding use of
+   Authentication-Info header field.
+
+   Special thank you to Tony Hansen for doing an early implementation
+   and providing extensive comments on the draft.
+
+11.  Design Motivations								11.  设计意图
+
+   The following design goals shaped this document.  Note that some of			基于以下设计目标产生出该文档。需要注意
+   the goals have changed since the initial version of the document.			的是一些目标已经发生改变。
+
+   o  The HTTP authentication mechanism has all modern features: support		o HTTP认证机制共有的特性：支持国际化的
+      for internationalized usernames and passwords, support for channel		用户名和密码，支持信道绑定。
+
+
+
+Melnikov                  Expires June 7, 2016                 [Page 15]
+
+Internet-Draft                 HTTP SCRAM                  December 2015
+
+
+      bindings.
+
+   o  The protocol supports mutual authentication.					o 该协议支持双向认证。
+
+   o  The authentication information stored in the authentication			o 存储与认证信息数据集的认证信息不足让
+      database is not sufficient by itself to impersonate the client.			黑客伪装成真实的客户端。
+
+   o  The server does not gain the ability to impersonate the client to			o 服务端不能伪装成客户端去认证其他服务器
+      other servers (with an exception for server-authorized proxies),			（除去服务端授权的代理），除非一些服务端
+      unless such other servers allow SCRAM authentication and use the			允许SCRAM机制并且让用户使用相同的扰码和迭代计数。
+      same salt and iteration count for the user.
+
+   o  The mechanism is extensible, but [hopefully] not overengineered in		o 该机制是可扩展的，但在一定程度上并非是精心设计的。
+      this respect.
+
+   o  Easier to implement than HTTP Digest in both clients and servers.			o 无论是客户端和服务端，实现上都易于HTTP摘要。	
+
+12.  References
+
+12.1.  Normative References
+
+   [RFC2104]  Krawczyk, H., Bellare, M., and R. Canetti, "HMAC: Keyed-
+              Hashing for Message Authentication", RFC 2104,
+              DOI 10.17487/RFC2104, February 1997,
+              <http://www.rfc-editor.org/info/rfc2104>.
+
+   [RFC2119]  Bradner, S., "Key words for use in RFCs to Indicate
+              Requirement Levels", BCP 14, RFC 2119,
+              DOI 10.17487/RFC2119, March 1997,
+              <http://www.rfc-editor.org/info/rfc2119>.
+
+   [RFC3629]  Yergeau, F., "UTF-8, a transformation format of ISO
+              10646", STD 63, RFC 3629, DOI 10.17487/RFC3629, November
+              2003, <http://www.rfc-editor.org/info/rfc3629>.
+
+   [RFC4648]  Josefsson, S., "The Base16, Base32, and Base64 Data
+              Encodings", RFC 4648, DOI 10.17487/RFC4648, October 2006,
+              <http://www.rfc-editor.org/info/rfc4648>.
+
+   [RFC5234]  Crocker, D., Ed. and P. Overell, "Augmented BNF for Syntax
+              Specifications: ABNF", STD 68, RFC 5234,
+              DOI 10.17487/RFC5234, January 2008,
+              <http://www.rfc-editor.org/info/rfc5234>.
+
+
+
+
+
+
+
+
+Melnikov                  Expires June 7, 2016                 [Page 16]
+
+Internet-Draft                 HTTP SCRAM                  December 2015
+
+
+   [RFC5802]  Newman, C., Menon-Sen, A., Melnikov, A., and N. Williams,
+              "Salted Challenge Response Authentication Mechanism
+              (SCRAM) SASL and GSS-API Mechanisms", RFC 5802,
+              DOI 10.17487/RFC5802, July 2010,
+              <http://www.rfc-editor.org/info/rfc5802>.
+
+   [RFC6234]  Eastlake 3rd, D. and T. Hansen, "US Secure Hash Algorithms
+              (SHA and SHA-based HMAC and HKDF)", RFC 6234,
+              DOI 10.17487/RFC6234, May 2011,
+              <http://www.rfc-editor.org/info/rfc6234>.
+
+   [RFC7235]  Fielding, R., Ed. and J. Reschke, Ed., "Hypertext Transfer
+              Protocol (HTTP/1.1): Authentication", RFC 7235,
+              DOI 10.17487/RFC7235, June 2014,
+              <http://www.rfc-editor.org/info/rfc7235>.
+
+   [RFC7613]  Saint-Andre, P. and A. Melnikov, "Preparation,
+              Enforcement, and Comparison of Internationalized Strings
+              Representing Usernames and Passwords", RFC 7613,
+              DOI 10.17487/RFC7613, August 2015,
+              <http://www.rfc-editor.org/info/rfc7613>.
+
+   [RFC7615]  Reschke, J., "HTTP Authentication-Info and Proxy-
+              Authentication-Info Response Header Fields", RFC 7615,
+              DOI 10.17487/RFC7615, September 2015,
+              <http://www.rfc-editor.org/info/rfc7615>.
+
+   [RFC7677]  Hansen, T., "SCRAM-SHA-256 and SCRAM-SHA-256-PLUS Simple
+              Authentication and Security Layer (SASL) Mechanisms",
+              RFC 7677, DOI 10.17487/RFC7677, November 2015,
+              <http://www.rfc-editor.org/info/rfc7677>.
+
+12.2.  Informative References
+
+   [RFC2865]  Rigney, C., Willens, S., Rubens, A., and W. Simpson,
+              "Remote Authentication Dial In User Service (RADIUS)",
+              RFC 2865, DOI 10.17487/RFC2865, June 2000,
+              <http://www.rfc-editor.org/info/rfc2865>.
+
+   [RFC2898]  Kaliski, B., "PKCS #5: Password-Based Cryptography
+              Specification Version 2.0", RFC 2898,
+              DOI 10.17487/RFC2898, September 2000,
+              <http://www.rfc-editor.org/info/rfc2898>.
+
+   [RFC2945]  Wu, T., "The SRP Authentication and Key Exchange System",
+              RFC 2945, DOI 10.17487/RFC2945, September 2000,
+              <http://www.rfc-editor.org/info/rfc2945>.
+
+
+
+
+Melnikov                  Expires June 7, 2016                 [Page 17]
+
+Internet-Draft                 HTTP SCRAM                  December 2015
+
+
+   [RFC4086]  Eastlake 3rd, D., Schiller, J., and S. Crocker,
+              "Randomness Requirements for Security", BCP 106, RFC 4086,
+              DOI 10.17487/RFC4086, June 2005,
+              <http://www.rfc-editor.org/info/rfc4086>.
+
+   [RFC4510]  Zeilenga, K., Ed., "Lightweight Directory Access Protocol
+              (LDAP): Technical Specification Road Map", RFC 4510,
+              DOI 10.17487/RFC4510, June 2006,
+              <http://www.rfc-editor.org/info/rfc4510>.
+
+   [RFC4949]  Shirey, R., "Internet Security Glossary, Version 2",
+              FYI 36, RFC 4949, DOI 10.17487/RFC4949, August 2007,
+              <http://www.rfc-editor.org/info/rfc4949>.
+
+   [RFC5246]  Dierks, T. and E. Rescorla, "The Transport Layer Security
+              (TLS) Protocol Version 1.2", RFC 5246,
+              DOI 10.17487/RFC5246, August 2008,
+              <http://www.rfc-editor.org/info/rfc5246>.
+
+   [RFC6331]  Melnikov, A., "Moving DIGEST-MD5 to Historic", RFC 6331,
+              DOI 10.17487/RFC6331, July 2011,
+              <http://www.rfc-editor.org/info/rfc6331>.
+
+Author's Address
+
+   Alexey Melnikov
+   Isode Ltd
+
+   Email: Alexey.Melnikov@isode.com
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Melnikov                  Expires June 7, 2016                 [Page 18]
